@@ -3,36 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>360 VR Player - Bluetooth Direct</title>
+    <title>360 VR Player - Direct BLE</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; color: white; }
         #overlay { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; text-align: center; z-index: 10; 
-            background: rgba(0,0,0,0.9); padding: 40px; border-radius: 15px; border: 2px solid #444;
+            text-align: center; z-index: 10; background: rgba(0,0,0,0.9);
+            padding: 30px; border-radius: 15px; border: 2px solid #444; width: 85%;
         }
         .btn {
-            display: inline-block; padding: 15px 30px; background: #2196F3;
-            color: white; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 10px; border: none;
+            display: block; width: 100%; padding: 15px; margin: 10px 0;
+            background: #2196F3; border: none; color: white;
+            border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px;
         }
-        #status { color: #ff9800; margin-bottom: 10px; font-weight: bold; }
+        #status { font-size: 0.9em; color: #ff9800; margin-bottom: 10px; }
+        #resetBtn {
+            position: fixed; bottom: 30px; right: 30px; z-index: 100;
+            width: 60px; height: 60px; border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3); border: 2px solid white;
+            color: white; font-size: 24px; cursor: pointer; display: none;
+        }
     </style>
 </head>
 <body>
 
     <div id="overlay">
-        <h1>360 VR PLAYER</h1>
-        <div id="status">Bluetooth Disconnected</div>
-        <button id="connectBT" class="btn">1. CONNECT SENSOR</button>
-        <br><br>
-        <label for="videoUpload" class="btn" style="background:#4CAF50">2. CHOOSE VIDEO</label>
+        <h1>VR PLAYER</h1>
+        <div id="status">Ready to connect...</div>
+        <button id="connectBT" class="btn">1. PAIR SENSOR</button>
+        <label for="videoUpload" class="btn" style="background: #4CAF50;">2. LOAD 360 VIDEO</label>
         <input type="file" id="videoUpload" accept="video/*" style="display:none">
-        <p style="font-size: 0.8em; color: #888; margin-top: 15px;">Press 'R' to reset orientation</p>
     </div>
 
+    <button id="resetBtn">🔄</button>
     <video id="videoSource" loop crossorigin="anonymous" playsinline style="display:none"></video>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 
     <script>
         const video = document.getElementById('videoSource');
@@ -40,11 +46,13 @@
         const fileInput = document.getElementById('videoUpload');
         const btBtn = document.getElementById('connectBT');
         const statusText = document.getElementById('status');
+        const resetBtn = document.getElementById('resetBtn');
 
         let targetRot = { x: 0, y: 0, z: 0 };
         let offset = { x: 0, y: 0, z: 0 };
+        let lastYaw = 0;
 
-        // --- BLUETOOTH CONNECTION ---
+        // --- BLUETOOTH ---
         btBtn.addEventListener('click', async () => {
             try {
                 const device = await navigator.bluetooth.requestDevice({
@@ -55,34 +63,32 @@
                 const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
                 const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
 
-                statusText.innerText = "SENSOR CONNECTED";
-                statusText.style.color = "#4CAF50";
+                statusText.innerText = "CONNECTED";
                 btBtn.style.display = "none";
 
                 await characteristic.startNotifications();
                 characteristic.addEventListener('characteristicvaluechanged', (event) => {
                     const rawData = new TextDecoder().decode(event.target.value);
-                    const values = rawData.split(',');
-                    if (values.length === 3) {
+                    const v = rawData.split(',');
+                    if (v.length === 3) {
                         const toRad = Math.PI / 180;
-                        
-                        // --- UPDATED MAPPING ---
-                        // Sensor X (Pitch) -> affects camera Z (Tilt)
-                        // Sensor Y (Roll)  -> affects camera X (Up/Down)
-                        // Sensor Z (Yaw)   -> affects camera Y (Left/Right)
-                        targetRot.x = -parseFloat(values[1]) * toRad; 
-                        targetRot.z = parseFloat(values[0]) * toRad;  
-                        targetRot.y = parseFloat(values[2]) * toRad;  
+                        let newYaw = parseFloat(v[2]);
+
+                        // Deadzone Filter to stop drift crawl
+                        if (Math.abs(newYaw - lastYaw) > 0.05) {
+                            targetRot.y = newYaw * toRad;
+                            lastYaw = newYaw;
+                        }
+                        targetRot.x = -parseFloat(v[1]) * toRad; 
+                        targetRot.z = parseFloat(v[0]) * toRad;  
                     }
                 });
-            } catch (e) {
-                statusText.innerText = "Error: " + e.message;
-            }
+            } catch (e) { statusText.innerText = "Error: " + e.message; }
         });
 
         // --- THREE.JS ---
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
@@ -95,29 +101,27 @@
         const geometry = new THREE.SphereGeometry(1000, 60, 40);
         geometry.scale(-1, 1, 1); 
         const videoTexture = new THREE.VideoTexture(video);
-        const material = new THREE.MeshBasicMaterial({ map: videoTexture });
-        const sphere = new THREE.Mesh(geometry, material);
+        const sphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: videoTexture }));
         scene.add(sphere);
 
         fileInput.addEventListener('change', function() {
             const file = this.files[0];
             if (file) {
                 const reader = new FileReader();
-                reader.onload = function(e) {
+                reader.onload = (e) => {
                     video.src = e.target.result;
                     video.play();
-                    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-                    offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
                     overlay.style.display = 'none';
+                    resetBtn.style.display = 'block';
+                    offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
+                    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
                 };
                 reader.readAsDataURL(file);
             }
         });
 
-        window.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyR' || e.code === 'Space') {
-                offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
-            }
+        resetBtn.addEventListener('click', () => {
+            offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
         });
 
         function animate() {
@@ -128,6 +132,12 @@
             renderer.render(scene, camera);
         }
         animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
