@@ -27,6 +27,7 @@
         <br><br>
         <label for="videoUpload" class="btn" style="background:#4CAF50">2. CHOOSE VIDEO</label>
         <input type="file" id="videoUpload" accept="video/*" style="display:none">
+        <p style="font-size: 0.8em; color: #888; margin-top: 15px;">Press 'R' to reset orientation</p>
     </div>
 
     <video id="videoSource" loop crossorigin="anonymous" playsinline style="display:none"></video>
@@ -43,7 +44,7 @@
         let targetRot = { x: 0, y: 0, z: 0 };
         let offset = { x: 0, y: 0, z: 0 };
 
-        // --- BLUETOOTH CONNECTION LOGIC ---
+        // --- BLUETOOTH CONNECTION ---
         btBtn.addEventListener('click', async () => {
             try {
                 const device = await navigator.bluetooth.requestDevice({
@@ -64,10 +65,14 @@
                     const values = rawData.split(',');
                     if (values.length === 3) {
                         const toRad = Math.PI / 180;
-                        // Mapping MPU6050 angles to Three.js rotations
-                        targetRot.x = -parseFloat(values[0]) * toRad; // Pitch
-                        targetRot.y = parseFloat(values[2]) * toRad;  // Yaw
-                        targetRot.z = parseFloat(values[1]) * toRad;  // Roll
+                        
+                        // --- UPDATED MAPPING ---
+                        // Sensor X (Pitch) -> affects camera Z (Tilt)
+                        // Sensor Y (Roll)  -> affects camera X (Up/Down)
+                        // Sensor Z (Yaw)   -> affects camera Y (Left/Right)
+                        targetRot.x = -parseFloat(values[1]) * toRad; 
+                        targetRot.z = parseFloat(values[0]) * toRad;  
+                        targetRot.y = parseFloat(values[2]) * toRad;  
                     }
                 });
             } catch (e) {
@@ -75,7 +80,7 @@
             }
         });
 
-        // --- THREE.JS SETUP ---
+        // --- THREE.JS ---
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -106,6 +111,12 @@
                     overlay.style.display = 'none';
                 };
                 reader.readAsDataURL(file);
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyR' || e.code === 'Space') {
+                offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
             }
         });
 
