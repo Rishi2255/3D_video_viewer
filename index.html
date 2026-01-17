@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>360 VR Player - Bluetooth Direct</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #overlay { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; text-align: center; z-index: 10; 
+            background: rgba(0,0,0,0.9); padding: 40px; border-radius: 15px; border: 2px solid #444;
+        }
+        .btn {
+            display: inline-block; padding: 15px 30px; background: #2196F3;
+            color: white; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 10px; border: none;
+        }
+        #status { color: #ff9800; margin-bottom: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="overlay">
+        <h1>360 VR PLAYER</h1>
+        <div id="status">Bluetooth Disconnected</div>
+        <button id="connectBT" class="btn">1. CONNECT SENSOR</button>
+        <br><br>
+        <label for="videoUpload" class="btn" style="background:#4CAF50">2. CHOOSE VIDEO</label>
+        <input type="file" id="videoUpload" accept="video/*" style="display:none">
+    </div>
+
+    <video id="videoSource" loop crossorigin="anonymous" playsinline style="display:none"></video>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        const video = document.getElementById('videoSource');
+        const overlay = document.getElementById('overlay');
+        const fileInput = document.getElementById('videoUpload');
+        const btBtn = document.getElementById('connectBT');
+        const statusText = document.getElementById('status');
+
+        let targetRot = { x: 0, y: 0, z: 0 };
+        let offset = { x: 0, y: 0, z: 0 };
+
+        // --- BLUETOOTH CONNECTION LOGIC ---
+        btBtn.addEventListener('click', async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+                });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+                const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+
+                statusText.innerText = "SENSOR CONNECTED";
+                statusText.style.color = "#4CAF50";
+                btBtn.style.display = "none";
+
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', (event) => {
+                    const rawData = new TextDecoder().decode(event.target.value);
+                    const values = rawData.split(',');
+                    if (values.length === 3) {
+                        const toRad = Math.PI / 180;
+                        // Mapping MPU6050 angles to Three.js rotations
+                        targetRot.x = -parseFloat(values[0]) * toRad; // Pitch
+                        targetRot.y = parseFloat(values[2]) * toRad;  // Yaw
+                        targetRot.z = parseFloat(values[1]) * toRad;  // Roll
+                    }
+                });
+            } catch (e) {
+                statusText.innerText = "Error: " + e.message;
+            }
+        });
+
+        // --- THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const cameraGroup = new THREE.Group();
+        cameraGroup.rotation.order = 'YXZ'; 
+        scene.add(cameraGroup);
+        cameraGroup.add(camera);
+
+        const geometry = new THREE.SphereGeometry(1000, 60, 40);
+        geometry.scale(-1, 1, 1); 
+        const videoTexture = new THREE.VideoTexture(video);
+        const material = new THREE.MeshBasicMaterial({ map: videoTexture });
+        const sphere = new THREE.Mesh(geometry, material);
+        scene.add(sphere);
+
+        fileInput.addEventListener('change', function() {
+            const file = this.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    video.src = e.target.result;
+                    video.play();
+                    if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+                    offset = { x: targetRot.x, y: targetRot.y, z: targetRot.z };
+                    overlay.style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            cameraGroup.rotation.x += (targetRot.x - offset.x - cameraGroup.rotation.x) * 0.15;
+            cameraGroup.rotation.y += (targetRot.y - offset.y - cameraGroup.rotation.y) * 0.15;
+            cameraGroup.rotation.z += (targetRot.z - offset.z - cameraGroup.rotation.z) * 0.15;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
